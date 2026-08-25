@@ -26,13 +26,28 @@
 #define UNUSED(x) x
 #endif
 
-#define zstr(x)  ( ((x==NULL) || (*x == 0)) ? 1 : 0)
-#define safe_free(x) if(x != NULL) { free( (void*) x); x = NULL; }
+/* A function, not a macro: the argument would otherwise be evaluated twice */
+static inline int zstr(const char *s) {
+    return (s == NULL || *s == '\0') ? 1 : 0;
+}
 
+/* Has to stay a macro: it clears the caller's pointer */
+#define safe_free(x) \
+   do { \
+       if ((x) != NULL) { \
+           free((void *) (x)); \
+           (x) = NULL; \
+       } \
+   } while (0)
+
+/* The body stays compiled - and its arguments type checked - even when DEBUG
+   is 0. The branch is what the optimiser drops. */
 #define debug_print(...) \
-    if (DEBUG > 0) { \
-        fprintf(stderr, PACKAGE_STRING ": " __VA_ARGS__); \
-    }
+   do { \
+       if (DEBUG > 0) { \
+           fprintf(stderr, PACKAGE_STRING ": " __VA_ARGS__); \
+       } \
+   } while (0)
 
 #define info_print(...) \
    do { \
