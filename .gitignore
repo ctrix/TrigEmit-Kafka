@@ -1,0 +1,38 @@
+CLAUDE.md
+
+# Build directory (out-of-tree builds)
+build/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Generated headers
+config.h
+
+# Compiled objects and libraries
+*.o
+*.lo
+*.a
+*.so
+*.so.*
+
+# Debian packaging artifacts
+*.deb
+*.buildinfo
+*.changes
+
+# Local-only helper scripts and notes (not tracked for now)
+do_indent.sh
+go.sh
+TODO.md
+
+# Editor and OS noise
+*~
+*.swp
+.vscode/
+.idea/
+.DS_Store

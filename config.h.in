@@ -1,0 +1,25 @@
+
+#define PACKAGE_STRING "trigemit-kafka"
+#define DEBUG 0
+
+#define KAFKA_MAX_SETUP_VAR_LEN 512
+
+/* Kafka's own limit on topic name length */
+#define KAFKA_MAX_TOPIC_LEN 249
+
+/* Size of the fixed result buffer the server hands to a string UDF.
+   Returning more than this requires the function to supply its own buffer. */
+#define KAFKA_UDF_RESULT_LEN 255
+
+/* Own result buffer for kafka_info(), which can exceed KAFKA_UDF_RESULT_LEN
+   once a long broker list is configured. */
+#define KAFKA_INFO_MAX_LEN 1024
+
+#cmakedefine INLINE @LIBSH_INLINE@
+#cmakedefine GIT_COMMIT_ID "@GIT_COMMIT_ID@"
+
+
+/* How long teardown waits for librdkafka to deliver what is still queued
+   before giving up on it. Bounded on purpose: this runs on kafka_disconnect(),
+   on DROP FUNCTION and on server shutdown, none of which may hang. */
+#define KAFKA_FLUSH_TIMEOUT_MS 10000
