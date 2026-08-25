@@ -44,12 +44,14 @@ MESSAGE(STATUS "TRIGEMIT_DEBUG: ${TRIGEMIT_DEBUG}")
 # **********************************************************
 
 SET(MARIADB_DEBUG OFF)
-SET(MARIADB_FIND_REQUIRED ON)
-SET(MARIADB_FIND_QUIETLY OFF)
-INCLUDE(FindMariaDB)
-find_package(MariaDB REQUIRED)
+FIND_PACKAGE(MariaDB REQUIRED)
 
-INCLUDE(FindKafka)
+# librdkafka has no Find module of its own here: PKG_CHECK_MODULES with
+# REQUIRED already aborts with a usable message when it is missing, so a
+# wrapper around it could only repeat the check. IMPORTED_TARGET gives a
+# target carrying the include dirs and libraries together.
+FIND_PACKAGE(PkgConfig REQUIRED)
+PKG_CHECK_MODULES(RDKAFKA REQUIRED IMPORTED_TARGET rdkafka)
 
 # *******************************************************************************
 
@@ -58,10 +60,7 @@ CONFIGURE_FILE(
     ${CMAKE_CURRENT_BINARY_DIR}/config.h
 )
 
-INCLUDE_DIRECTORIES(
-    ${MARIADB_INCLUDE_DIR}
-    ${RDKAFKA_INCLUDE_DIRS}
-)
+INCLUDE_DIRECTORIES(${MARIADB_INCLUDE_DIR})
 
 SET( SOURCES
     kafka-cmd-info.c
@@ -74,9 +73,10 @@ SET( SOURCES
     ht.c
 )
 
+# PkgConfig::RDKAFKA carries librdkafka's include dirs and libraries with it
 SET(LINKLIBS
     ${MARIADB_LIBRARY}
-    ${RDKAFKA_LIBRARIES}
+    PkgConfig::RDKAFKA
 )
 
 

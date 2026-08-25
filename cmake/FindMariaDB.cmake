@@ -45,7 +45,6 @@
 # - mariadb support?
 # - on Windows, lookup for related registry keys
 
-cmake_minimum_required(VERSION 3.0.0)
 
 # "As of MariaDB 5.7.9, MariaDB distributions contain a mariadbclient.pc file that provides information about MariaDB configuration for use by the pkg-config command."
 find_package(PkgConfig QUIET)
@@ -168,15 +167,15 @@ endif(${MARIADB_PUBLIC_VAR_NS}_INCLUDE_DIR AND NOT ${MARIADB_PUBLIC_VAR_NS}_VERS
 
 # Check find_package arguments
 include(FindPackageHandleStandardArgs)
-if(${MARIADB_PUBLIC_VAR_NS}_FIND_REQUIRED AND NOT ${MARIADB_PUBLIC_VAR_NS}_FIND_QUIETLY)
-    find_package_handle_standard_args(
-        ${MARIADB_PUBLIC_VAR_NS}
-        REQUIRED_VARS ${MARIADB_PUBLIC_VAR_NS}_LIBRARY ${MARIADB_PUBLIC_VAR_NS}_INCLUDE_DIR
-        VERSION_VAR ${MARIADB_PUBLIC_VAR_NS}_VERSION
-    )
-else(${MARIADB_PUBLIC_VAR_NS}_FIND_REQUIRED AND NOT ${MARIADB_PUBLIC_VAR_NS}_FIND_QUIETLY)
-    find_package_handle_standard_args(${MARIADB_PUBLIC_VAR_NS} "Could NOT find mariadb(client)" ${MARIADB_PUBLIC_VAR_NS}_LIBRARY ${MARIADB_PUBLIC_VAR_NS}_INCLUDE_DIR)
-endif(${MARIADB_PUBLIC_VAR_NS}_FIND_REQUIRED AND NOT ${MARIADB_PUBLIC_VAR_NS}_FIND_QUIETLY)
+# The package name must match the file name (FindMariaDB.cmake), or CMake
+# warns that the result variables will not follow the expected pattern.
+# FPHSA sets both MariaDB_FOUND and the uppercase MARIADB_FOUND, and picks
+# up REQUIRED/QUIET from the find_package() call on its own.
+find_package_handle_standard_args(
+    MariaDB
+    REQUIRED_VARS ${MARIADB_PUBLIC_VAR_NS}_LIBRARY ${MARIADB_PUBLIC_VAR_NS}_INCLUDE_DIR
+    VERSION_VAR ${MARIADB_PUBLIC_VAR_NS}_VERSION
+)
 
 if(${MARIADB_PUBLIC_VAR_NS}_FOUND)
     # <deprecated>

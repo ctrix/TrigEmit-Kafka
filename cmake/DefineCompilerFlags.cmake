@@ -1,43 +1,62 @@
-# define system dependent compiler flags
+# System dependent compiler flags.
+#
+# Everything here is a compile *option*, applied with ADD_COMPILE_OPTIONS.
+# ADD_DEFINITIONS is for preprocessor defines; bare flags passed through it
+# happen to work but are the wrong tool, and the mistake is easy to copy.
 
 INCLUDE(CheckCCompilerFlag)
 
-IF (UNIX AND NOT WIN32)
-    ADD_DEFINITIONS(-D_GNU_SOURCE)
+IF (WIN32 OR NOT UNIX)
+    RETURN()
+ENDIF()
 
+ADD_COMPILE_DEFINITIONS(_GNU_SOURCE)
+
+# A loadable module has to be position independent. CMake already does this
+# for MODULE targets; stating it means a stray OBJECT or static target added
+# later does not quietly get it wrong.
+SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+ADD_COMPILE_OPTIONS(
+    -Wall
+    -Wextra
+    -Wreturn-type
+    -Wstrict-prototypes
+    -Wmissing-prototypes
+    -Wmissing-declarations
+    -Wpointer-arith
+    -Wchar-subscripts
+    -Wformat=2
+    -Wbad-function-cast
+    -Wshadow
+    -Wuninitialized
+)
+
+# -fstack-protector-strong where the compiler has it, plain -fstack-protector
+# otherwise. The original asked for both unconditionally, which is just the
+# weaker one being overridden.
+CHECK_C_COMPILER_FLAG("-fstack-protector-strong" WITH_STACK_PROTECTOR_STRONG)
+IF (WITH_STACK_PROTECTOR_STRONG)
+    ADD_COMPILE_OPTIONS(-fstack-protector-strong)
+ELSE()
     CHECK_C_COMPILER_FLAG("-fstack-protector" WITH_STACK_PROTECTOR)
     IF (WITH_STACK_PROTECTOR)
-        ADD_DEFINITIONS(-fstack-protector)
-    ENDIF (WITH_STACK_PROTECTOR)
+        ADD_COMPILE_OPTIONS(-fstack-protector)
+    ENDIF()
+ENDIF()
 
-    CHECK_C_COMPILER_FLAG("-D_FORTIFY_SOURCE=2" WITH_FORTIFY_SOURCE)
-    IF (WITH_FORTIFY_SOURCE)
-        ADD_DEFINITIONS(-D_FORTIFY_SOURCE=2)
-    ENDIF (WITH_FORTIFY_SOURCE)
+# _FORTIFY_SOURCE is a glibc feature selected by a preprocessor define, not a
+# compiler flag -- CHECK_C_COMPILER_FLAG on it tests nothing, since every
+# compiler accepts every -D. It also needs optimisation to do anything: at -O0
+# glibc emits a #warning and disables itself. So it goes only on the optimised
+# configurations, and -U comes first because some toolchains predefine it.
+ADD_COMPILE_OPTIONS(
+    "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:-U_FORTIFY_SOURCE;-D_FORTIFY_SOURCE=2>"
+)
 
-    SET(CMAKE_INCLUDE_PATH "/usr/include/ /usr/local/include" )
+# Readable stack traces when something crashes the server under a debugger
+ADD_COMPILE_OPTIONS("$<$<CONFIG:Debug>:-fno-omit-frame-pointer>")
 
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -W -Wreturn-type  -Wstrict-prototypes")
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -W -Wmissing-prototypes -Wmissing-declarations -Wpointer-arith -Wchar-subscripts -Wformat=2 -Wbad-function-cast -Wno-strict-aliasing -Wshadow")
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wuninitialized -Wno-format-nonliteral" )
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wdeclaration-after-statement" )
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-omit-frame-pointer -Wstrict-aliasing=2")
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unused -Wno-unused-parameter" )
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fvisibility=hidden")
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-all")
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong")
-    #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=undefined -fno-sanitize-recover")
-
-    # Mandatory for loadable modules
-    SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC" )
-
-    IF ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -Wno-strict-aliasing")
-    ENDIF ("${CMAKE_BUILD_TYPE}" STREQUAL "Release")
-
-    IF ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-        SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0 -Wstrict-aliasing=2 -fno-omit-frame-pointer")
-    ENDIF ("${CMAKE_BUILD_TYPE}" STREQUAL "Debug")
-
-
-ENDIF (UNIX AND NOT WIN32)
+# Per configuration optimisation and debug flags are left to CMake, which
+# already supplies -O3 -DNDEBUG for Release, -O2 -g -DNDEBUG for RelWithDebInfo
+# and -g for Debug. Setting them again here only lets the two disagree.
