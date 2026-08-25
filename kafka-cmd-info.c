@@ -62,10 +62,9 @@ char *kafka_info(UDF_INIT *initid, UDF_ARGS *UNUSED(args), char *UNUSED(result),
 
 /* *INDENT-OFF* */
     written = snprintf(buf, KAFKA_INFO_MAX_LEN,
-	"Version: %s-%s\n"
+	"Version: %s\n"
 	"Brokers: %s\n",
 	PACKAGE_STRING,
-	GIT_COMMIT_ID,
 	brk
     );
 /* *INDENT-ON* */

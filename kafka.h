@@ -45,18 +45,18 @@ static inline int zstr(const char *s) {
 #define debug_print(...) \
    do { \
        if (DEBUG > 0) { \
-           fprintf(stderr, PACKAGE_STRING ": " __VA_ARGS__); \
+           fprintf(stderr, PACKAGE_NAME ": " __VA_ARGS__); \
        } \
    } while (0)
 
 #define info_print(...) \
    do { \
-       fprintf(stderr,  PACKAGE_STRING ": " __VA_ARGS__); \
+       fprintf(stderr, PACKAGE_NAME ": " __VA_ARGS__); \
    } while (0)
 
 #define error_print(...) \
    do { \
-       fprintf(stderr, PACKAGE_STRING ": " __VA_ARGS__); \
+       fprintf(stderr, PACKAGE_NAME ": " __VA_ARGS__); \
    } while (0)
 
 #endif

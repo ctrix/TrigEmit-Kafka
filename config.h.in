@@ -1,6 +1,25 @@
 
-#define PACKAGE_STRING "trigemit-kafka"
-#define DEBUG 0
+/* Name of this module. Used as the prefix on every log line, so it carries no
+   version. */
+#define PACKAGE_NAME "trigemit-kafka"
+
+/* Numeric version, from the nearest git tag. 0.0.0 when the tree has no tag
+   to derive one from. */
+#define PACKAGE_VERSION "@PROJECT_VERSION@"
+
+/* Full build identifier from 'git describe': the tag, or the tag plus commit
+   distance and short hash, plus "-dirty" for a modified tree. Never empty;
+   falls back to "unknown" without git. See cmake/VersionString.cmake. */
+#define GIT_COMMIT_ID "@GIT_COMMIT_ID@"
+
+/* What kafka_info() reports. The build id subsumes the version when a tag is
+   reachable, so this is one string rather than two. */
+#define PACKAGE_STRING PACKAGE_NAME "-" GIT_COMMIT_ID
+
+/* Whether debug_print() diagnostics are compiled in. Set by the
+   TRIGEMIT_DEBUG option at configure time. */
+#cmakedefine01 TRIGEMIT_DEBUG
+#define DEBUG TRIGEMIT_DEBUG
 
 #define KAFKA_MAX_SETUP_VAR_LEN 512
 
@@ -14,10 +33,6 @@
 /* Own result buffer for kafka_info(), which can exceed KAFKA_UDF_RESULT_LEN
    once a long broker list is configured. */
 #define KAFKA_INFO_MAX_LEN 1024
-
-#cmakedefine INLINE @LIBSH_INLINE@
-#cmakedefine GIT_COMMIT_ID "@GIT_COMMIT_ID@"
-
 
 /* How long teardown waits for librdkafka to deliver what is still queued
    before giving up on it. Bounded on purpose: this runs on kafka_disconnect(),

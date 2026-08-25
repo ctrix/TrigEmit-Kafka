@@ -1,14 +1,17 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.16)
 
-PROJECT (TrigEmit-Kafka LANGUAGES C)
+SET(CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
+
+# Runs before PROJECT(), which takes the version it derives from the git tag
+INCLUDE(VersionString)
+
+PROJECT (TrigEmit-Kafka VERSION ${GIT_VERSION} LANGUAGES C)
 
 SET(CMAKE_SKIP_BUILD_RPATH  FALSE)
 SET(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)
 
 #SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib/")
 #SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
-
-SET(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 IF(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
     MESSAGE(FATAL_ERROR "Prevented in-tree built. This is not a good practice. Please read README.md to find a suitable example.")
@@ -20,7 +23,23 @@ ENDIF (WIN32)
 
 INCLUDE(DefineCMakeDefaults)
 INCLUDE(DefineCompilerFlags)
-INCLUDE(VersionString)
+
+# **********************************************************
+# Compile debug_print() diagnostics in or out. Defaults to on for a Debug
+# build and off otherwise; the value is cached from the first configure, so
+# changing CMAKE_BUILD_TYPE later does not move it -- pass -DTRIGEMIT_DEBUG
+# explicitly, or reconfigure from a clean build directory.
+
+IF(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    SET(TRIGEMIT_DEBUG_DEFAULT ON)
+ELSE()
+    SET(TRIGEMIT_DEBUG_DEFAULT OFF)
+ENDIF()
+
+OPTION(TRIGEMIT_DEBUG "Compile in debug_print() diagnostics" ${TRIGEMIT_DEBUG_DEFAULT})
+
+MESSAGE(STATUS "Version: ${PROJECT_VERSION} (${GIT_COMMIT_ID})")
+MESSAGE(STATUS "TRIGEMIT_DEBUG: ${TRIGEMIT_DEBUG}")
 
 # **********************************************************
 
