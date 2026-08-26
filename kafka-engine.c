@@ -1,33 +1,85 @@
 
-#include <assert.h>
 #include <stdatomic.h>
 #include <kafka.h>
 #include <kafka-engine.h>
 
-/**
- * @brief Message delivery report callback.
+/*
+ * Delivery failure logging, throttled.
  *
- * This callback is called exactly once per message, indicating if
- * the message was succesfully delivered
- * (rkmessage->err == RD_KAFKA_RESP_ERR_NO_ERROR) or permanently
- * failed delivery (rkmessage->err != RD_KAFKA_RESP_ERR_NO_ERROR).
+ * A single unreachable broker retires everything librdkafka has queued --
+ * queue.buffering.max.messages is 50000 -- as a delivery failure apiece, and
+ * a trigger under load keeps refilling that queue. Logging one line per
+ * message turns a broker outage into a disk-filling event, on an unbuffered
+ * stderr written from the poll thread.
  *
- * The callback is triggered from rd_kafka_poll() and executes on
- * the application's thread.
+ * The count is not the interesting part anyway: ptk->failed already has it and
+ * kafka_stats() already reports it to SQL. What the log has to carry is the
+ * error string and the moment the state changed, so that is what it carries.
+ *
+ * A change of error code bypasses the interval: going from "broker down" to
+ * "message too large" is a different failure and an operator should see it at
+ * once rather than up to KAFKA_ERROR_LOG_INTERVAL_S later.
+ *
+ * Runs only inside dr_msg_cb(); see the note on the throttling fields in
+ * kafka-engine.h for why none of this needs locking.
  */
+static void log_delivery_failure(tek_kafka_t *ptk, rd_kafka_resp_err_t err) {
+    time_t now = time(NULL);
+
+    if (err == ptk->last_err && (now - ptk->last_log_time) < KAFKA_ERROR_LOG_INTERVAL_S) {
+        ptk->suppressed++;
+        return;
+    }
+
+    if (ptk->suppressed > 0) {
+        error_print("Delivery failed for topic %s: %s (and %u more in the last %llds)\n", ptk->topic, rd_kafka_err2str(err), ptk->suppressed, (long long) (now - ptk->last_log_time));
+    } else {
+        error_print("Delivery failed for topic %s: %s\n", ptk->topic, rd_kafka_err2str(err));
+    }
+
+    ptk->last_err = err;
+    ptk->last_log_time = now;
+    ptk->suppressed = 0;
+}
+
+/*
+ * Called on the first success after a run of failures. Nothing marked the end
+ * of an outage before this, so the log showed it starting and never stopping.
+ */
+static void log_delivery_recovered(tek_kafka_t *ptk) {
+    if (ptk->suppressed > 0) {
+        info_print("Delivery recovered for topic %s (%u further failure(s) went unreported)\n", ptk->topic, ptk->suppressed);
+    } else {
+        info_print("Delivery recovered for topic %s\n", ptk->topic);
+    }
+
+    ptk->last_err = RD_KAFKA_RESP_ERR_NO_ERROR;
+    ptk->last_log_time = 0;
+    ptk->suppressed = 0;
+}
+
 static void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
     tek_kafka_t *ptk = rkmessage->_private;
 
-    assert(ptk);
     (void) rk;
     (void) opaque;
 
+    /*
+     * Not an assert(): NDEBUG is defined in RelWithDebInfo and Release, so an
+     * assert here would be absent from every shipping build and a NULL would
+     * become a segfault inside a librdkafka callback.
+     */
+    if (ptk == NULL) {
+        return;
+    }
+
     if (rkmessage->err) {
-        fprintf(stderr, "Message delivery failed: %s\n", rd_kafka_err2str(rkmessage->err));
         atomic_fetch_add(&ptk->failed, 1);
+        log_delivery_failure(ptk, rkmessage->err);
     } else {
-        /* TODO OLD Set produce.offset.report to true for the offset to work */
-        //fprintf(stderr, "%% Message delivered (%zd bytes, " "partition %" PRId32 " offset %ld)\n", rkmessage->len, rkmessage->partition, rkmessage->offset);
+        if (ptk->last_err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            log_delivery_recovered(ptk);
+        }
         atomic_fetch_add(&ptk->transferred, 1);
     }
 
@@ -149,6 +201,17 @@ void tek_kafka_endpoint_dispose(tek_kafka_t *ptk) {
         if (remaining > 0) {
             error_print("Giving up on %d undelivered message(s) for topic %s after %d ms\n", remaining, ptk->topic, KAFKA_FLUSH_TIMEOUT_MS);
         }
+    }
+
+    /*
+     * The throttle in the delivery report callback may still be holding
+     * failures that were never printed. Report them rather than lose them on
+     * the way out. The poll thread has been joined above, so nothing else is
+     * touching these fields.
+     */
+    if (ptk->suppressed > 0) {
+        error_print("Topic %s: %u further delivery failure(s) went unreported (%s)\n", ptk->topic, ptk->suppressed, rd_kafka_err2str(ptk->last_err));
+        ptk->suppressed = 0;
     }
 
     /* Destroy topic object */

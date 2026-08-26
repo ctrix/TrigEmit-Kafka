@@ -5,6 +5,7 @@
 #include <kafka.h>
 
 #include <pthread.h>
+#include <time.h>
 #include <librdkafka/rdkafka.h>
 
 typedef enum tek_kafka_status_e tek_kafka_status_t;
@@ -47,6 +48,18 @@ struct tek_kafka_s {
 
     /* Cleared by dispose() and polled by the endpoint thread: genuinely shared */
     _Atomic int running;
+
+    /*
+     * Delivery failure log throttling. Plain fields on purpose: they are read
+     * and written only inside the delivery report callback, which runs on the
+     * poll thread while the endpoint is live and on the disposing thread only
+     * after dispose() has joined that thread. The two never overlap, and
+     * pthread_join() provides the happens-before, so no atomics and no lock
+     * are needed here. Do not "fix" this by adding one.
+     */
+    rd_kafka_resp_err_t last_err;
+    time_t last_log_time;
+    uint32_t suppressed;
 };
 
 tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic);

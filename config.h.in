@@ -34,6 +34,13 @@
    once a long broker list is configured. */
 #define KAFKA_INFO_MAX_LEN 1024
 
+/* Shortest interval between two delivery-failure log lines for the same topic
+   reporting the same error. A broker outage can retire tens of thousands of
+   queued messages, one delivery report each; without this the error log takes
+   a line per message. Failures in between are counted and reported in the
+   next line rather than dropped. */
+#define KAFKA_ERROR_LOG_INTERVAL_S 60
+
 /* How long teardown waits for librdkafka to deliver what is still queued
    before giving up on it. Bounded on purpose: this runs on kafka_disconnect(),
    on DROP FUNCTION and on server shutdown, none of which may hang. */
