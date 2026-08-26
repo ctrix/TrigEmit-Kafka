@@ -2,6 +2,7 @@ CLAUDE.md
 
 # Build directory (out-of-tree builds)
 build/
+tmp/
 
 # CMake
 CMakeCache.txt

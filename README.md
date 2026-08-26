@@ -98,27 +98,41 @@ cmake --install build
 systemctl start mariadb
 ```
 
-Then register the functions:
+### Registering the functions
+
+The module does nothing until the functions are registered. `sql/install.sql`
+does it:
 
 ```
-mariadb -e "CREATE FUNCTION kafka_send RETURNS INTEGER SONAME 'kafka.so'"
+mariadb < sql/install.sql
 ```
+
+`cmake --install` also puts both scripts in the data directory, so from an
+installed package it is:
+
+```
+mariadb < /usr/share/trigemit-kafka/install.sql
+```
+
+Registration is server-wide and survives a restart -- it is a row in
+`mysql.func`, not a session setting -- so it is done once, not per connection.
+It needs INSERT on `mysql.func`, which in practice means running it as root.
+
+To remove them again:
+
+```
+mariadb < sql/uninstall.sql
+```
+
+Dropping the last function makes MariaDB `dlclose` the module, which tears the
+producer down and flushes what librdkafka still had queued, bounded by
+`KAFKA_FLUSH_TIMEOUT_MS`. Against an unreachable broker that takes the full
+10 seconds.
 
 
 ## Functions
 
-Register them once, from the server's plugin directory:
-
-```
-mariadb <<'SQL'
-CREATE FUNCTION kafka_connect          RETURNS INTEGER SONAME 'kafka.so';
-CREATE FUNCTION kafka_connection_param RETURNS INTEGER SONAME 'kafka.so';
-CREATE FUNCTION kafka_disconnect       RETURNS INTEGER SONAME 'kafka.so';
-CREATE FUNCTION kafka_send             RETURNS INTEGER SONAME 'kafka.so';
-CREATE FUNCTION kafka_stats            RETURNS STRING  SONAME 'kafka.so';
-CREATE FUNCTION kafka_info             RETURNS STRING  SONAME 'kafka.so';
-SQL
-```
+See **Registering the functions** above for how to install them.
 
 ### `kafka_connection_param(property, value)`
 

@@ -113,6 +113,18 @@ INSTALL(
     LIBRARY DESTINATION "${MARIADB_PLUGIN_DIR}"
 )
 
+# The registration scripts are part of installing the module, not an extra:
+# the .so does nothing until CREATE FUNCTION has run. GNUInstallDirs gives the
+# platform's data directory rather than assuming share/.
+INCLUDE(GNUInstallDirs)
+
+INSTALL(
+    FILES
+        sql/install.sql
+        sql/uninstall.sql
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/trigemit-kafka"
+)
+
 # *******************************************************************************
 # *** TESTS
 # *******************************************************************************
