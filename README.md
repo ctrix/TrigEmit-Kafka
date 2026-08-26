@@ -1,5 +1,29 @@
 # TrigEmit-Kafka
 
+[![CI](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![MariaDB](https://img.shields.io/badge/MariaDB-11.x-003545?logo=mariadb&logoColor=white)](https://mariadb.org/)
+[![librdkafka](https://img.shields.io/badge/librdkafka-2.x-231F20?logo=apachekafka&logoColor=white)](https://github.com/confluentinc/librdkafka)
+
+**Publish to Kafka straight from SQL.**
+
+A MariaDB UDF, loaded as a server plugin, that turns row changes into a Kafka
+event stream. Put `kafka_send()` in a trigger and every row becomes a message:
+
+```sql
+SELECT kafka_connect('broker1:9092,broker2:9092');
+
+CREATE TRIGGER orders_ai AFTER INSERT ON orders FOR EACH ROW
+    SELECT kafka_send('orders', JSON_OBJECT('id', NEW.id, 'total', NEW.total))
+    INTO @discard;
+```
+
+Publishing is asynchronous, so a trigger never waits for the broker. The
+connection is configured entirely from SQL — `kafka_connection_param()` sets
+any librdkafka property, which puts SASL, TLS, delivery guarantees and
+buffering within reach without rebuilding. Deliveries are idempotent by
+default, because a reordered or duplicated row change is a wrong event.
+
 ## Building
 
 Builds must happen outside the source tree; an in-tree build is refused.
