@@ -70,7 +70,6 @@ SET( SOURCES
     kafka-cmd-send.c
     kafka-engine.c
     kafka-table.c
-    ht.c
 )
 
 # The MariaDB client library is deliberately absent. A UDF is dlopened by the

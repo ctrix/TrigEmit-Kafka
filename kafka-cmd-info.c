@@ -59,7 +59,6 @@ char *kafka_info(UDF_INIT *initid, UDF_ARGS *UNUSED(args), char *UNUSED(result),
     if (kafka_table_get_brokers(brokers, sizeof(brokers)) == 0) {
         brk = "Not Set";
     }
-
 /* *INDENT-OFF* */
     written = snprintf(buf, KAFKA_INFO_MAX_LEN,
 	"Version: %s\n"

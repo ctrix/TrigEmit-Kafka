@@ -64,7 +64,6 @@ static tek_kafka_status_t kafka_conf_set(rd_kafka_conf_t *conf, const char *name
 tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic) {
     tek_kafka_t *ptk = NULL;
 
-
     if (zstr(brokers) || zstr(topic)) {
         return NULL;
     }
@@ -96,8 +95,7 @@ tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic) {
      * disposition. Teardown already waits far longer on the flush anyway.
      */
 
-    if (kafka_conf_set(ptk->conf, "bootstrap.servers", ptk->brokers) != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "compression.codec", "lz4") != KAFKA_SUCCESS) {
+    if (kafka_conf_set(ptk->conf, "bootstrap.servers", ptk->brokers) != KAFKA_SUCCESS || kafka_conf_set(ptk->conf, "compression.codec", "lz4") != KAFKA_SUCCESS) {
         /* Nothing has been started yet, so dispose() just releases what we hold */
         tek_kafka_endpoint_dispose(ptk);
         return NULL;
@@ -109,7 +107,6 @@ tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic) {
        rd_kafka_conf_set(ptk->conf, "statistics.interval.ms", "1000", errstr, sizeof(errstr));
        rd_kafka_conf_set_stats_cb(ptk->conf, stats_cb);
      */
-
 
     return ptk;
 }
@@ -213,7 +210,6 @@ void tek_kafka_endpoint_get_stats(tek_kafka_t *ptk, uint32_t *transferred, uint3
     return;
 }
 
-
 static void *endpoint_thread(void *data) {
     tek_kafka_t *ptk = data;
 
@@ -231,8 +227,7 @@ static tek_kafka_status_t tek_kafka_endpoint_run_producer(tek_kafka_t *ptk) {
     if (kafka_conf_set(ptk->conf, "max.in.flight.requests.per.connection", "20000") != KAFKA_SUCCESS ||
         kafka_conf_set(ptk->conf, "queue.buffering.max.messages", "50000") != KAFKA_SUCCESS ||
         kafka_conf_set(ptk->conf, "message.send.max.retries", "3") != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "batch.num.messages", "20000") != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "queue.buffering.max.ms", "500") != KAFKA_SUCCESS) {
+        kafka_conf_set(ptk->conf, "batch.num.messages", "20000") != KAFKA_SUCCESS || kafka_conf_set(ptk->conf, "queue.buffering.max.ms", "500") != KAFKA_SUCCESS) {
         return KAFKA_ERROR;
     }
 
@@ -299,7 +294,6 @@ static tek_kafka_status_t tek_kafka_endpoint_run_producer(tek_kafka_t *ptk) {
     }
     ptk->thread_started = 1;
 
-
     return KAFKA_SUCCESS;
 }
 
@@ -312,7 +306,6 @@ tek_kafka_status_t tek_kafka_endpoint_run(tek_kafka_t *ptk) {
 }
 
 static tek_kafka_status_t tek_kafka_producer_feed_key(tek_kafka_t *ptk, const void *key, size_t klen, const void *data, size_t datalen) {
-
 
     if (key != NULL && klen == 0) {
         klen = strlen((char *) key) + 1;

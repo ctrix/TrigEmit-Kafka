@@ -50,9 +50,9 @@ struct tek_kafka_s {
 };
 
 tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic);
-void tek_kafka_endpoint_dispose(tek_kafka_t *ptk);
-tek_kafka_status_t tek_kafka_endpoint_run(tek_kafka_t *ptk);
-tek_kafka_status_t tek_kafka_producer_feed(tek_kafka_t *ptk, const void *data, size_t datalen);
-void tek_kafka_endpoint_get_stats(tek_kafka_t *ptk, uint32_t *transferred, uint32_t *failed);
+void tek_kafka_endpoint_dispose(tek_kafka_t * ptk);
+tek_kafka_status_t tek_kafka_endpoint_run(tek_kafka_t * ptk);
+tek_kafka_status_t tek_kafka_producer_feed(tek_kafka_t * ptk, const void *data, size_t datalen);
+void tek_kafka_endpoint_get_stats(tek_kafka_t * ptk, uint32_t * transferred, uint32_t * failed);
 
 #endif

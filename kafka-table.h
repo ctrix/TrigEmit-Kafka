@@ -1,6 +1,8 @@
 
-#include <ht.h>
-#include <kafka-engine.h>
+#ifndef TRIGEMIT_KAFKA_TABLE_H
+#define TRIGEMIT_KAFKA_TABLE_H 1
+
+#include "kafka-engine.h"
 
 typedef struct kafka_topic_s kafka_topic_t;
 struct kafka_topic_s {
@@ -8,10 +10,21 @@ struct kafka_topic_s {
     tek_kafka_t *conn;
 };
 
+/*
+ * The registry is a flat array of topics searched linearly.
+ *
+ * That is a deliberate choice, not a shortcut: kafka-engine.c runs one poll
+ * thread per topic, which caps the realistic topic count in the low tens --
+ * far below where a strcmp scan costs anything next to the produce call it
+ * precedes. An array also makes removing a single topic trivial, which is
+ * what a hash table without a delete operation could not do at all.
+ */
 typedef struct kafka_tables_s kafka_tables_t;
 struct kafka_tables_s {
-    char *brokers;
-    ht *table;
+    char *brokers;              /* NULL until the brokers are set: doubles as the "initialized" flag */
+    kafka_topic_t **topics;
+    size_t count;
+    size_t capacity;
 };
 
 int kafka_table_initialized(void);
@@ -31,6 +44,12 @@ int kafka_table_create(char *name);
 
 int kafka_table_send(char *topic, const void *data, size_t datalen);
 
+/* Tears down one topic, leaving the brokers and every other topic in place.
+   Returns 0 when the topic was dismissed, -1 when it was not registered. */
+int kafka_table_dismiss(char *topic);
+
 void kafka_table_dismiss_all(void);
 
 void kafka_topic_get_stats(char *topic, uint32_t * transferred, uint32_t * failed);
+
+#endif
