@@ -20,7 +20,7 @@ jobs:
         build_type: [ RelWithDebInfo, Debug ]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Version detection needs tags, and actions/checkout fetches a
           # shallow copy with none by default.
@@ -42,7 +42,7 @@ jobs:
         # failed build would pass this step.
         run: |
           set -o pipefail
-          cmake --build build -j"0 0nproc)" 2>&1 | tee build.log
+          cmake --build build -j"$(nproc)" 2>&1 | tee build.log
 
       - name: Fail on compiler warnings
         run: |
@@ -67,14 +67,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Install packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y debhelper cmake pkg-config libmariadb-dev librdkafka-dev
+          # build-essential is an implicit build dependency that Debian policy says
+          # must not be listed in debian/control, so it has to be installed here:
+          # dpkg-checkbuilddeps requires it and the runner image does not have it.
+          sudo apt-get install -y build-essential debhelper cmake pkg-config libmariadb-dev librdkafka-dev
 
       - name: Build the package
         run: ./build-deb.sh
@@ -123,7 +126,7 @@ jobs:
           KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
