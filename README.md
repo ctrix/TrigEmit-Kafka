@@ -1,28 +1,125 @@
 # TrigEmit-Kafka
 
+### Your database already knows what changed. Let it say so.
+
 [![CI](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MariaDB](https://img.shields.io/badge/MariaDB-11.x-003545?logo=mariadb&logoColor=white)](https://mariadb.org/)
 [![librdkafka](https://img.shields.io/badge/librdkafka-2.x-231F20?logo=apachekafka&logoColor=white)](https://github.com/confluentinc/librdkafka)
 
-**Publish to Kafka straight from SQL.**
+A MariaDB UDF that publishes to Kafka from inside SQL. Put `kafka_send()` in a
+trigger and every row change leaves the database as an event — asynchronously,
+without the writing transaction waiting for the broker.
 
-A MariaDB UDF, loaded as a server plugin, that turns row changes into a Kafka
-event stream. Put `kafka_send()` in a trigger and every row becomes a message:
+## The problem it solves
+
+Something changed in a table, and something outside the database needs to know:
+a search index, a cache, an audit trail, another service.
+
+The usual answers all cost something. Dual writes in the application mean every
+writer has to remember to publish, and a crash between the two leaves the
+change and the event disagreeing. A polling job trades latency for load and
+needs a watermark column on every table it watches. Change data capture is the
+principled answer, but it means running and operating a connector, and reading
+the replication stream of a database that was not necessarily set up for it.
+
+TrigEmit-Kafka takes the shortest path: the database already fires a trigger on
+the row it just changed, so the event is emitted right there, from the one place
+that cannot miss a write and cannot disagree with it.
+
+- **Nothing in the application changes.** Any client writing to the table
+  produces events, including ones you do not control and ones written before
+  Kafka existed in your architecture.
+- **The writer does not wait.** `kafka_send()` hands the message to librdkafka's
+  queue and returns; a background thread deals with the broker. A slow or absent
+  broker does not slow down INSERTs.
+- **The payload is yours.** `JSON_OBJECT(...)` and the `NEW` / `OLD` rows mean
+  the event carries exactly the fields you want, in the shape the consumer
+  wants, rather than a raw row image you have to reinterpret.
+
+The trade-off, stated plainly: this is fire-and-forget, not transactional
+outbox. The message is queued when the trigger fires, so a transaction that
+rolls back afterwards will still have emitted its event, and messages queued
+when the server is killed outright are lost. If you need the event and the row
+to commit or fail together, you want an outbox table — with, if you like,
+`kafka_send()` on *its* trigger.
+
+## Using it
 
 ```sql
+-- once per server, at startup
 SELECT kafka_connect('broker1:9092,broker2:9092');
 
+-- once per table
 CREATE TRIGGER orders_ai AFTER INSERT ON orders FOR EACH ROW
-    SELECT kafka_send('orders', JSON_OBJECT('id', NEW.id, 'total', NEW.total))
-    INTO @discard;
+    SELECT kafka_send('orders', JSON_OBJECT(
+        'event', 'created',
+        'id',    NEW.id,
+        'total', NEW.total,
+        'at',    NOW()
+    )) INTO @discard;
 ```
 
-Publishing is asynchronous, so a trigger never waits for the broker. The
-connection is configured entirely from SQL — `kafka_connection_param()` sets
-any librdkafka property, which puts SASL, TLS, delivery guarantees and
-buffering within reach without rebuilding. Deliveries are idempotent by
-default, because a reordered or duplicated row change is a wrong event.
+That is the whole integration. From here on, every insert into `orders` — from
+any client, in any language — puts a message on the `orders` topic:
+
+```json
+{"event": "created", "id": 1041, "total": 29.99, "at": "2026-08-26 09:12:44"}
+```
+
+An authenticated broker is the same, with parameters set before connecting:
+
+```sql
+SELECT kafka_connection_param('security.protocol', 'SASL_SSL');
+SELECT kafka_connection_param('sasl.mechanism',    'SCRAM-SHA-512');
+SELECT kafka_connection_param('sasl.username',     'appuser');
+SELECT kafka_connection_param('sasl.password',     's3cret');
+SELECT kafka_connect('broker1:9093,broker2:9093');
+```
+
+`kafka_connection_param()` accepts any librdkafka property, so delivery
+guarantees, compression, buffering and TLS are all reachable without
+rebuilding. See [Functions](#functions) for the full set.
+
+## Performance
+
+Measured with the integration setup: a single-node Kafka broker and the MariaDB
+server on the **same 2-core aarch64 host with 2 GB of RAM**, publishing through
+a real `AFTER INSERT` trigger. Modest hardware, and the broker is a process on
+the same machine, so there is no network in the path — read these as an upper
+bound on what the module itself costs, not as a capacity plan.
+
+Inserting 50,000 rows in one statement, with and without the trigger:
+
+| | time | per row |
+|---|---|---|
+| plain INSERT | 0.033 s | 0.66 µs |
+| INSERT + `kafka_send()` trigger | 0.178 s | 3.56 µs |
+| **cost of publishing** | **0.145 s** | **2.9 µs** |
+
+Sustained, 200,000 rows through the trigger in a single statement:
+
+```
+enqueue:     773 ms   ->  258,000 messages/s
+end-to-end:  788 ms   ->  253,000 messages/s   (acks=all, idempotent)
+```
+
+`Transferred: 200000  Failed: 0`, and all 200,000 read back off the topic with
+`kcat`. End-to-end here means the broker had acknowledged every message, with
+the default settings — `enable.idempotence=true`, which forces `acks=all`. The
+flush after the insert took 15 ms, because librdkafka had already batched and
+shipped nearly everything while the statement was still running.
+
+So the publishing overhead is a few microseconds per row, and throughput is
+bounded by the broker and the network long before it is bounded by this module.
+Between runs the numbers moved by about 10%, which on a 2-core box is noise.
+
+What actually constrains you in production is the queue, not the CPU:
+`queue.buffering.max.messages` (50,000 by default) is how many messages may be
+in flight before `kafka_send()` starts waiting for the broker to catch up. If
+the broker is unreachable, that is the buffer that absorbs the outage — and
+once it is full, INSERTs will block. Size it for how long an outage you want to
+survive at your write rate, with `kafka_connection_param()`.
 
 ## Building
 
@@ -81,6 +178,7 @@ Version: trigemit-kafka-unknown          (no git information at all)
 
 A leading `v` is stripped for CMake's own `PROJECT_VERSION`, which falls back
 to `0.0.0` when no tag is reachable or the nearest tag is not a version number.
+
 ## Installing
 
 ```
@@ -154,9 +252,67 @@ producer down and flushes what librdkafka still had queued, bounded by
 10 seconds.
 
 
+## Building a Debian package
+
+```
+./build-deb.sh
+```
+
+Build dependencies are `debhelper`, `cmake`, `pkg-config`, `libmariadb-dev`
+and `librdkafka-dev`; `dpkg-checkbuilddeps` lists whatever is missing.
+
+`debian/` is **generated and not tracked**. The tracked template is
+`debian-build/`, a complete Debian directory in its own right, whose changelog
+carries the placeholder version `unset`. The script copies it into place,
+replaces the changelog with one whose version comes from git, runs
+`dpkg-buildpackage`, and collects the results in `dist/` instead of leaving
+them in the parent directory. Edit `debian-build/`, never `debian/` -- the
+latter is overwritten on every build.
+
+The version is derived the same way the module's own is, so the package and
+`kafka_info()` agree. A Debian upstream version has to start with a digit, and
+a native package cannot contain a hyphen, so `git describe` is rewritten:
+
+| `git describe`            | package version         |
+|---------------------------|-------------------------|
+| `v0.1.0`                  | `0.1.0`                 |
+| `v0.1.0-3-g1a2b3c4`       | `0.1.0+3.g1a2b3c4`      |
+| `1a2b3c4` (no tag)        | `0.0.0+git.1a2b3c4`     |
+| any of the above `-dirty` | ...`+dirty`             |
+
+The `+` suffixes sort above the bare tag, so a build made after a release
+upgrades over that release. An untagged build sorts below any tagged one,
+which is what you want: `apt` will not pull a dev build over a release.
+
+The result installs the module, the registration scripts and the
+documentation:
+
+```
+/usr/lib/mysql/plugin/kafka.so
+/usr/share/trigemit-kafka/install.sql
+/usr/share/trigemit-kafka/uninstall.sql
+/usr/share/doc/trigemit-kafka/
+```
+
+Installing the package does **not** register the functions — that still needs
+`mariadb < /usr/share/trigemit-kafka/install.sql`, because it writes to
+`mysql.func` on a running server.
+
+Runtime dependencies are worked out by `dpkg-shlibdeps` and come to
+`librdkafka1`, `libc6` and `mariadb-server`. Note the absence of a MariaDB
+client library: a server-side UDF resolves the UDF ABI from the server's own
+symbols and links nothing from MariaDB.
+
+The package is **native** (`debian-build/source/format` is `3.0 (native)`), so
+its version comes from the changelog alone and there is no separate upstream
+tarball. Tag a release with `git tag v1.2.3` and the next `./build-deb.sh`
+picks it up automatically.
+
 ## Functions
 
-See **Registering the functions** above for how to install them.
+Six functions, registered by `sql/install.sql`. Connection state is
+**server-wide**, not per session: one `kafka_connect()` serves every client and
+every trigger.
 
 ### `kafka_connection_param(property, value)`
 
@@ -296,62 +452,6 @@ error, repeats of the same error are counted rather than printed, and a
 summary follows at most once every `KAFKA_ERROR_LOG_INTERVAL_S` (60 seconds).
 A different error code is reported at once. Recovery is logged too. Without
 this a broker outage writes one line per queued message.
-
-## Building a Debian package
-
-```
-./build-deb.sh
-```
-
-Build dependencies are `debhelper`, `cmake`, `pkg-config`, `libmariadb-dev`
-and `librdkafka-dev`; `dpkg-checkbuilddeps` lists whatever is missing.
-
-`debian/` is **generated and not tracked**. The tracked template is
-`debian-build/`, a complete Debian directory in its own right, whose changelog
-carries the placeholder version `unset`. The script copies it into place,
-replaces the changelog with one whose version comes from git, runs
-`dpkg-buildpackage`, and collects the results in `dist/` instead of leaving
-them in the parent directory. Edit `debian-build/`, never `debian/` -- the
-latter is overwritten on every build.
-
-The version is derived the same way the module's own is, so the package and
-`kafka_info()` agree. A Debian upstream version has to start with a digit, and
-a native package cannot contain a hyphen, so `git describe` is rewritten:
-
-| `git describe`            | package version         |
-|---------------------------|-------------------------|
-| `v0.1.0`                  | `0.1.0`                 |
-| `v0.1.0-3-g1a2b3c4`       | `0.1.0+3.g1a2b3c4`      |
-| `1a2b3c4` (no tag)        | `0.0.0+git.1a2b3c4`     |
-| any of the above `-dirty` | ...`+dirty`             |
-
-The `+` suffixes sort above the bare tag, so a build made after a release
-upgrades over that release. An untagged build sorts below any tagged one,
-which is what you want: `apt` will not pull a dev build over a release.
-
-The result installs the module, the registration scripts and the
-documentation:
-
-```
-/usr/lib/mysql/plugin/kafka.so
-/usr/share/trigemit-kafka/install.sql
-/usr/share/trigemit-kafka/uninstall.sql
-/usr/share/doc/trigemit-kafka/
-```
-
-Installing the package does **not** register the functions — that still needs
-`mariadb < /usr/share/trigemit-kafka/install.sql`, because it writes to
-`mysql.func` on a running server.
-
-Runtime dependencies are worked out by `dpkg-shlibdeps` and come to
-`librdkafka1`, `libc6` and `mariadb-server`. Note the absence of a MariaDB
-client library: a server-side UDF resolves the UDF ABI from the server's own
-symbols and links nothing from MariaDB.
-
-The package is **native** (`debian/source/format` is `3.0 (native)`), so its
-version comes from `debian/changelog` alone and there is no separate upstream
-tarball. Keeping that version in step with the one `kafka_info()` reports means
-tagging the release to match — see **Version** above.
 
 ## Tests
 
