@@ -98,13 +98,64 @@ if(${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE)
     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --version                OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_VERSION)
     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --variable=pkglibdir     OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_LIBRARY_DIR)
     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --variable=pkgincludedir OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_INCLUDE_DIR)
-    execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --plugindir              OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_PLUGIN_DIR)
-    set(${MARIADB_PUBLIC_VAR_NS}_PLUGIN_DIR ${${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_PLUGIN_DIR})
+    execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --plugindir              OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_CLIENT_PLUGIN_DIR)
 #     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --socket                 OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_SOCKET)
 #     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --port                   OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_PORT)
 #     execute_process(OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND ${${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE} --libmariadbd-libs         OUTPUT_VARIABLE ${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_LIBRARY_EMBEDDED)
     _mariadb_set_dotted_version("${${MARIADB_PUBLIC_VAR_NS}_MARIADB_CONFIG_VERSION}")
 endif(${MARIADB_PUBLIC_VAR_NS}_CONFIG_EXECUTABLE)
+
+########## Server plugin directory ##########
+#
+# Where a *server* plugin has to be installed for the server to load it, i.e.
+# what SELECT @@plugin_dir reports.
+#
+# Deliberately not mariadb_config --plugindir: that is the client library's
+# plugin directory (auth plugins and such), a completely different place --
+# /usr/lib/<arch>/libmariadb3/plugin against the server's /usr/lib/mysql/plugin
+# on a typical Debian. Installing a UDF there puts it somewhere the server
+# never looks.
+#
+# The server binary knows its own compiled-in default and will print it
+# without starting up, which needs no running server and no credentials.
+
+if(NOT MARIADB_PLUGIN_DIR)
+    find_program(
+        ${MARIADB_PUBLIC_VAR_NS}_SERVER_EXECUTABLE
+        NAMES mariadbd mysqld
+        PATHS /usr/sbin /usr/local/sbin /usr/libexec /usr/local/libexec
+    )
+
+    if(${MARIADB_PUBLIC_VAR_NS}_SERVER_EXECUTABLE)
+        execute_process(
+            COMMAND ${${MARIADB_PUBLIC_VAR_NS}_SERVER_EXECUTABLE} --verbose --help
+            OUTPUT_VARIABLE ${MARIADB_PRIVATE_VAR_NS}_SERVER_HELP
+            RESULT_VARIABLE ${MARIADB_PRIVATE_VAR_NS}_SERVER_RESULT
+            ERROR_QUIET
+            TIMEOUT 30
+        )
+
+        if(${MARIADB_PRIVATE_VAR_NS}_SERVER_RESULT EQUAL 0)
+            # The help output lists one option per line, name then value
+            string(REGEX MATCH "\nplugin-dir[ \t]+([^\n]+)" ${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR_MATCH "${${MARIADB_PRIVATE_VAR_NS}_SERVER_HELP}")
+
+            if(${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR_MATCH)
+                string(STRIP "${CMAKE_MATCH_1}" ${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR)
+                # The server reports it with a trailing slash
+                string(REGEX REPLACE "/+$" "" ${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR "${${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR}")
+            endif()
+        endif()
+    endif()
+
+    if(NOT ${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR)
+        set(${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR "${CMAKE_INSTALL_PREFIX}/lib/mysql/plugin")
+        message(WARNING "No MariaDB server binary found to ask for the plugin directory, guessing ${${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR}. Override with -DMARIADB_PLUGIN_DIR=<path> (SELECT @@plugin_dir on the target server).")
+    endif()
+
+    set(MARIADB_PLUGIN_DIR "${${MARIADB_PRIVATE_VAR_NS}_PLUGIN_DIR}" CACHE PATH "Directory the MariaDB server loads plugins from (its @@plugin_dir)")
+endif(NOT MARIADB_PLUGIN_DIR)
+
+message(STATUS "MariaDB server plugin dir: ${MARIADB_PLUGIN_DIR}")
 
 set(${MARIADB_PRIVATE_VAR_NS}_COMMON_FIND_OPTIONS PATH_SUFFIXES mariadb)
 

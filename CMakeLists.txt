@@ -73,9 +73,13 @@ SET( SOURCES
     ht.c
 )
 
-# PkgConfig::RDKAFKA carries librdkafka's include dirs and libraries with it
+# The MariaDB client library is deliberately absent. A UDF is dlopened by the
+# server, which resolves the UDF ABI from its own symbols; the build needs the
+# MariaDB headers and nothing else from MariaDB. Linking the client library in
+# only risks two copies of those symbols in one process.
+#
+# PkgConfig::RDKAFKA carries librdkafka's include dirs and libraries with it.
 SET(LINKLIBS
-    ${MARIADB_LIBRARY}
     PkgConfig::RDKAFKA
 )
 
@@ -97,14 +101,16 @@ SET_TARGET_PROPERTIES(
         PROJECT_LABEL "TrigEmit Kafka UDF for MariaDB"
 )
 
-#SET(DESTDIR "${CMAKE_INSTALL_PREFIX}/${MARIADB_PLUGIN_DIR}")
-SET(DESTDIR "${MARIADB_PLUGIN_DIR}")
-
+# Straight into the server's own plugin directory, which is absolute -- see
+# cmake/FindMariaDB.cmake. Staging still works the usual way, with the DESTDIR
+# environment variable at install time.
+#
+# A MODULE library produces no archive, so LIBRARY is the only destination
+# that applies.
 INSTALL(
     TARGETS
         kafka
-    LIBRARY DESTINATION "${DESTDIR}"
-    ARCHIVE DESTINATION "${DESTDIR}"
+    LIBRARY DESTINATION "${MARIADB_PLUGIN_DIR}"
 )
 
 # *******************************************************************************
