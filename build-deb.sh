@@ -33,8 +33,8 @@ fi
 # revision. So the tag keeps its dots, the commit distance and hash become a
 # '+' suffix, and a leading 'v' is dropped:
 #
-#   v0.1.0                  -> 0.1.0
-#   v0.1.0-3-g1a2b3c4       -> 0.1.0+3.g1a2b3c4
+#   2026.8.1                -> 2026.8.1
+#   2026.8.1-3-g1a2b3c4     -> 2026.8.1+3.g1a2b3c4
 #   1a2b3c4   (no tag)      -> 0.0.0+git.1a2b3c4
 #   ...-dirty               -> ...+dirty
 #

@@ -3,6 +3,7 @@
 ### Your database already knows what changed. Let it say so.
 
 [![CI](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml/badge.svg)](https://github.com/ctrix/TrigEmit-Kafka/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/tag/ctrix/TrigEmit-Kafka?label=version&color=blue)](https://github.com/ctrix/TrigEmit-Kafka/tags)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![MariaDB](https://img.shields.io/badge/MariaDB-11.x-003545?logo=mariadb&logoColor=white)](https://mariadb.org/)
 [![librdkafka](https://img.shields.io/badge/librdkafka-2.x-231F20?logo=apachekafka&logoColor=white)](https://github.com/confluentinc/librdkafka)
@@ -161,7 +162,7 @@ There is no version number written down in the source. It comes from the most
 recent git tag, so tagging a release is all it takes:
 
 ```
-git tag v1.2.3
+git tag 1.2.3
 git push --tags
 ```
 
@@ -170,8 +171,8 @@ build, otherwise the tag plus commit distance and short hash, with `-dirty`
 appended when the working tree was modified:
 
 ```
-Version: trigemit-kafka-v1.2.3
-Version: trigemit-kafka-v1.2.3-4-g1a2b3c4-dirty
+Version: trigemit-kafka-1.2.3
+Version: trigemit-kafka-1.2.3-4-g1a2b3c4-dirty
 Version: trigemit-kafka-1a2b3c4          (no tags yet)
 Version: trigemit-kafka-unknown          (no git information at all)
 ```
@@ -275,8 +276,8 @@ a native package cannot contain a hyphen, so `git describe` is rewritten:
 
 | `git describe`            | package version         |
 |---------------------------|-------------------------|
-| `v0.1.0`                  | `0.1.0`                 |
-| `v0.1.0-3-g1a2b3c4`       | `0.1.0+3.g1a2b3c4`      |
+| `2026.8.1`                | `2026.8.1`              |
+| `2026.8.1-3-g1a2b3c4`     | `2026.8.1+3.g1a2b3c4`   |
 | `1a2b3c4` (no tag)        | `0.0.0+git.1a2b3c4`     |
 | any of the above `-dirty` | ...`+dirty`             |
 
@@ -305,7 +306,7 @@ symbols and links nothing from MariaDB.
 
 The package is **native** (`debian-build/source/format` is `3.0 (native)`), so
 its version comes from the changelog alone and there is no separate upstream
-tarball. Tag a release with `git tag v1.2.3` and the next `./build-deb.sh`
+tarball. Tag a release with `git tag 1.2.3` and the next `./build-deb.sh`
 picks it up automatically.
 
 ## Functions
@@ -432,7 +433,7 @@ MariaDB> SELECT kafka_stats('orders');
 Transferred: 41  Failed: 0
 
 MariaDB> SELECT kafka_info();
-Version: trigemit-kafka-v0.1.0
+Version: trigemit-kafka-2026.8.1
 Brokers: broker1:9092
 Parameters: 2
   enable.idempotence = true

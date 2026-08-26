@@ -18,7 +18,7 @@
 #
 # Neither is ever empty; both are compiled into config.h.
 #
-# Tag a release with 'git tag v1.2.3' (and 'git push --tags').
+# Tag a release with 'git tag 1.2.3' (and 'git push --tags').
 #
 
 SET(GIT_VERSION "0.0.0")
