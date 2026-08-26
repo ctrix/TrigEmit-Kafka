@@ -272,3 +272,59 @@ error, repeats of the same error are counted rather than printed, and a
 summary follows at most once every `KAFKA_ERROR_LOG_INTERVAL_S` (60 seconds).
 A different error code is reported at once. Recovery is logged too. Without
 this a broker outage writes one line per queued message.
+
+## Building a Debian package
+
+```
+./build-deb.sh
+```
+
+Build dependencies are `debhelper`, `cmake`, `pkg-config`, `libmariadb-dev`
+and `librdkafka-dev`; `dpkg-checkbuilddeps` lists whatever is missing.
+
+`debian/` is **generated and not tracked**. The tracked template is
+`debian-build/`, a complete Debian directory in its own right, whose changelog
+carries the placeholder version `unset`. The script copies it into place,
+replaces the changelog with one whose version comes from git, runs
+`dpkg-buildpackage`, and collects the results in `dist/` instead of leaving
+them in the parent directory. Edit `debian-build/`, never `debian/` -- the
+latter is overwritten on every build.
+
+The version is derived the same way the module's own is, so the package and
+`kafka_info()` agree. A Debian upstream version has to start with a digit, and
+a native package cannot contain a hyphen, so `git describe` is rewritten:
+
+| `git describe`            | package version         |
+|---------------------------|-------------------------|
+| `v0.1.0`                  | `0.1.0`                 |
+| `v0.1.0-3-g1a2b3c4`       | `0.1.0+3.g1a2b3c4`      |
+| `1a2b3c4` (no tag)        | `0.0.0+git.1a2b3c4`     |
+| any of the above `-dirty` | ...`+dirty`             |
+
+The `+` suffixes sort above the bare tag, so a build made after a release
+upgrades over that release. An untagged build sorts below any tagged one,
+which is what you want: `apt` will not pull a dev build over a release.
+
+The result installs the module, the registration scripts and the
+documentation:
+
+```
+/usr/lib/mysql/plugin/kafka.so
+/usr/share/trigemit-kafka/install.sql
+/usr/share/trigemit-kafka/uninstall.sql
+/usr/share/doc/trigemit-kafka/
+```
+
+Installing the package does **not** register the functions — that still needs
+`mariadb < /usr/share/trigemit-kafka/install.sql`, because it writes to
+`mysql.func` on a running server.
+
+Runtime dependencies are worked out by `dpkg-shlibdeps` and come to
+`librdkafka1`, `libc6` and `mariadb-server`. Note the absence of a MariaDB
+client library: a server-side UDF resolves the UDF ABI from the server's own
+symbols and links nothing from MariaDB.
+
+The package is **native** (`debian/source/format` is `3.0 (native)`), so its
+version comes from `debian/changelog` alone and there is no separate upstream
+tarball. Keeping that version in step with the one `kafka_info()` reports means
+tagging the release to match — see **Version** above.

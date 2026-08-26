@@ -1,0 +1,7 @@
+trigemit-kafka (unset) unstable; urgency=medium
+
+  * Placeholder. This file is a template: build-deb.sh overwrites it with an
+    entry whose version comes from git describe, so nothing ever builds a
+    package that actually carries the version "unset". See README.md.
+
+ -- Massimo Cetra <mcetra@gmail.com>  Wed, 26 Aug 2026 08:28:03 +0000

@@ -1,0 +1,18 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=cmake
+
+#
+# The plugin directory is named explicitly rather than detected. A build chroot
+# has no MariaDB server binary to ask, so cmake/FindMariaDB.cmake would fall
+# back to a guess and warn about it. This is the server's @@plugin_dir on
+# Debian and derivatives.
+#
+# CMAKE_BUILD_TYPE is deliberately left to debhelper, which sets None and
+# passes the distribution's own flags from dpkg-buildflags. Forcing Release or
+# RelWithDebInfo here would fight those, and would add a second
+# -D_FORTIFY_SOURCE on top of the one dpkg-buildflags already supplies.
+#
+override_dh_auto_configure:
+	dh_auto_configure -- -DMARIADB_PLUGIN_DIR=/usr/lib/mysql/plugin

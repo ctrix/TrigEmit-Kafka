@@ -1,0 +1,27 @@
+Source: trigemit-kafka
+Section: database
+Priority: optional
+Maintainer: Massimo Cetra <mcetra@gmail.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake,
+ pkg-config,
+ libmariadb-dev,
+ librdkafka-dev,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+
+Package: trigemit-kafka
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, mariadb-server
+Description: MariaDB UDF for publishing to Kafka
+ TrigEmit-Kafka is a MariaDB user defined function module, loaded by the server
+ as a plugin, that lets SQL publish messages to a Kafka cluster.
+ .
+ The intended use is a trigger calling kafka_send() with a JSON_OBJECT()
+ payload, turning row changes into a stream of Kafka events. Publishing is
+ asynchronous, so a trigger does not wait for the broker.
+ .
+ The connection is configured entirely from SQL: kafka_connection_param() sets
+ any librdkafka property, which makes SASL and TLS authenticated brokers,
+ delivery guarantees and buffering all reachable without rebuilding.
