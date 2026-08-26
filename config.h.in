@@ -34,6 +34,10 @@
    once a long broker list is configured. */
 #define KAFKA_INFO_MAX_LEN 1024
 
+/* Size of the buffer a UDF hands down for an error message it will report
+   back to the caller, or log. librdkafka error strings fit comfortably. */
+#define KAFKA_ERRBUF_LEN 512
+
 /* Shortest interval between two delivery-failure log lines for the same topic
    reporting the same error. A broker outage can retire tens of thousands of
    queued messages, one delivery report each; without this the error log takes

@@ -49,7 +49,9 @@ void kafka_info_deinit(UDF_INIT *initid) {
 char *kafka_info(UDF_INIT *initid, UDF_ARGS *UNUSED(args), char *UNUSED(result), unsigned long *length, char *UNUSED(is_null), char *UNUSED(error)) {
     char *buf = initid->ptr;
     char brokers[KAFKA_MAX_SETUP_VAR_LEN + 1];
+    char params[KAFKA_INFO_MAX_LEN / 2];
     const char *brk = brokers;
+    int nparams;
     int written;
 
     debug_print("%s\n", __FUNCTION__);
@@ -57,9 +59,12 @@ char *kafka_info(UDF_INIT *initid, UDF_ARGS *UNUSED(args), char *UNUSED(result),
     /* Copied out under the table lock: a concurrent kafka_disconnect() frees
        the stored string, so it must not be held by pointer */
     if (kafka_table_get_brokers(brokers, sizeof(brokers)) == 0) {
-        brk = "Not Set";
+        brk = "Not connected";
     }
-    written = snprintf(buf, KAFKA_INFO_MAX_LEN, "Version: %s\n" "Brokers: %s\n", PACKAGE_STRING, brk);
+
+    nparams = kafka_table_describe_params(params, sizeof(params));
+
+    written = snprintf(buf, KAFKA_INFO_MAX_LEN, "Version: %s\nBrokers: %s\nParameters: %d\n%s", PACKAGE_STRING, brk, nparams, params);
 
     /* snprintf() reports what it would have written, so clamp to what it did */
     if (written < 0) {

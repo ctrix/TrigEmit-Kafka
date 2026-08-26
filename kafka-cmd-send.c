@@ -40,8 +40,8 @@ my_bool kafka_send_init(UDF_INIT *UNUSED(initid), UDF_ARGS *args, char *message)
      * NULL is detected at call time, in kafka_send() below.
      */
 
-    if (kafka_table_initialized() == 0) {
-        strncpy(message, "Kafka brokers has not been initialized.", MYSQL_ERRMSG_SIZE);
+    if (kafka_table_connected() == 0) {
+        strncpy(message, "Not connected. Call kafka_connect() first.", MYSQL_ERRMSG_SIZE);
         return 1;
     }
 

@@ -27,7 +27,7 @@ my_bool kafka_stats_init(UDF_INIT *UNUSED(initid), UDF_ARGS *args, char *message
         return 1;
     }
 
-    if (kafka_table_initialized() == 0) {
+    if (kafka_table_connected() == 0) {
         strncpy(message, "Kafka has not been initialized.", MYSQL_ERRMSG_SIZE);
         return 1;
     }

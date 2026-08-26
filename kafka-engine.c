@@ -6,13 +6,12 @@
 /*
  * Delivery failure logging, throttled.
  *
- * A single unreachable broker retires everything librdkafka has queued --
- * queue.buffering.max.messages is 50000 -- as a delivery failure apiece, and
- * a trigger under load keeps refilling that queue. Logging one line per
- * message turns a broker outage into a disk-filling event, on an unbuffered
- * stderr written from the poll thread.
+ * A single unreachable broker retires everything librdkafka has queued as a
+ * delivery failure apiece, and a trigger under load keeps refilling that
+ * queue. Logging one line per message turns a broker outage into a
+ * disk-filling event, on an unbuffered stderr written from the poll thread.
  *
- * The count is not the interesting part anyway: ptk->failed already has it and
+ * The count is not the interesting part anyway: tt->failed already has it and
  * kafka_stats() already reports it to SQL. What the log has to carry is the
  * error string and the moment the state changed, so that is what it carries.
  *
@@ -23,43 +22,43 @@
  * Runs only inside dr_msg_cb(); see the note on the throttling fields in
  * kafka-engine.h for why none of this needs locking.
  */
-static void log_delivery_failure(tek_kafka_t *ptk, rd_kafka_resp_err_t err) {
+static void log_delivery_failure(tek_topic_t *tt, rd_kafka_resp_err_t err) {
     time_t now = time(NULL);
 
-    if (err == ptk->last_err && (now - ptk->last_log_time) < KAFKA_ERROR_LOG_INTERVAL_S) {
-        ptk->suppressed++;
+    if (err == tt->last_err && (now - tt->last_log_time) < KAFKA_ERROR_LOG_INTERVAL_S) {
+        tt->suppressed++;
         return;
     }
 
-    if (ptk->suppressed > 0) {
-        error_print("Delivery failed for topic %s: %s (and %u more in the last %llds)\n", ptk->topic, rd_kafka_err2str(err), ptk->suppressed, (long long) (now - ptk->last_log_time));
+    if (tt->suppressed > 0) {
+        error_print("Delivery failed for topic %s: %s (and %u more in the last %llds)\n", tt->name, rd_kafka_err2str(err), tt->suppressed, (long long) (now - tt->last_log_time));
     } else {
-        error_print("Delivery failed for topic %s: %s\n", ptk->topic, rd_kafka_err2str(err));
+        error_print("Delivery failed for topic %s: %s\n", tt->name, rd_kafka_err2str(err));
     }
 
-    ptk->last_err = err;
-    ptk->last_log_time = now;
-    ptk->suppressed = 0;
+    tt->last_err = err;
+    tt->last_log_time = now;
+    tt->suppressed = 0;
 }
 
 /*
  * Called on the first success after a run of failures. Nothing marked the end
  * of an outage before this, so the log showed it starting and never stopping.
  */
-static void log_delivery_recovered(tek_kafka_t *ptk) {
-    if (ptk->suppressed > 0) {
-        info_print("Delivery recovered for topic %s (%u further failure(s) went unreported)\n", ptk->topic, ptk->suppressed);
+static void log_delivery_recovered(tek_topic_t *tt) {
+    if (tt->suppressed > 0) {
+        info_print("Delivery recovered for topic %s (%u further failure(s) went unreported)\n", tt->name, tt->suppressed);
     } else {
-        info_print("Delivery recovered for topic %s\n", ptk->topic);
+        info_print("Delivery recovered for topic %s\n", tt->name);
     }
 
-    ptk->last_err = RD_KAFKA_RESP_ERR_NO_ERROR;
-    ptk->last_log_time = 0;
-    ptk->suppressed = 0;
+    tt->last_err = RD_KAFKA_RESP_ERR_NO_ERROR;
+    tt->last_log_time = 0;
+    tt->suppressed = 0;
 }
 
 static void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void *opaque) {
-    tek_kafka_t *ptk = rkmessage->_private;
+    tek_topic_t *tt = rkmessage->_private;
 
     (void) rk;
     (void) opaque;
@@ -69,69 +68,65 @@ static void dr_msg_cb(rd_kafka_t *rk, const rd_kafka_message_t *rkmessage, void 
      * assert here would be absent from every shipping build and a NULL would
      * become a segfault inside a librdkafka callback.
      */
-    if (ptk == NULL) {
+    if (tt == NULL) {
         return;
     }
 
     if (rkmessage->err) {
-        atomic_fetch_add(&ptk->failed, 1);
-        log_delivery_failure(ptk, rkmessage->err);
+        atomic_fetch_add(&tt->failed, 1);
+        log_delivery_failure(tt, rkmessage->err);
     } else {
-        if (ptk->last_err != RD_KAFKA_RESP_ERR_NO_ERROR) {
-            log_delivery_recovered(ptk);
+        if (tt->last_err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+            log_delivery_recovered(tt);
         }
-        atomic_fetch_add(&ptk->transferred, 1);
+        atomic_fetch_add(&tt->transferred, 1);
     }
 
     return;
 }
 
 /*
-static int stats_cb(rd_kafka_t * rk, char *json, size_t json_len, void *opaque) {
-    (void) rk;
-    (void) json_len;
-    (void) opaque;
-    info_print("%s\n", json);
-    return 0;
-}
-*/
-
-/*
  * Sets one librdkafka property, reporting failure instead of asserting it.
- * The previous code used assert(), which NDEBUG removes from Release and
- * RelWithDebInfo builds, so every one of these checks vanished from the
- * builds people actually ship.
+ * NDEBUG is defined in RelWithDebInfo and Release, so an assert here would be
+ * absent from the builds people actually ship.
+ *
+ * errbuf, when given, receives librdkafka's own message so a UDF can put it in
+ * front of the user rather than only in the error log.
  */
-static tek_kafka_status_t kafka_conf_set(rd_kafka_conf_t *conf, const char *name, const char *value) {
+static tek_kafka_status_t kafka_conf_set(rd_kafka_conf_t *conf, const char *name, const char *value, char *errbuf, size_t errbuflen) {
     char errstr[512];
 
     if (rd_kafka_conf_set(conf, name, value, errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK) {
-        error_print("Cannot set kafka property %s=%s: %s\n", name, value, errstr);
+        if (errbuf != NULL && errbuflen > 0) {
+            snprintf(errbuf, errbuflen, "%s", errstr);
+        }
+        error_print("Cannot set kafka property %s: %s\n", name, errstr);
         return KAFKA_ERROR;
     }
 
     return KAFKA_SUCCESS;
 }
 
-tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic) {
-    tek_kafka_t *ptk = NULL;
+tek_kafka_t *tek_kafka_producer_create(const char *brokers) {
+    tek_kafka_t *tk = NULL;
 
-    if (zstr(brokers) || zstr(topic)) {
+    if (zstr(brokers)) {
         return NULL;
     }
 
-    ptk = malloc(sizeof(tek_kafka_t));
-    if (ptk == NULL) {
+    tk = malloc(sizeof(tek_kafka_t));
+    if (tk == NULL) {
         return NULL;
     }
-    memset(ptk, 0, sizeof(tek_kafka_t));
+    memset(tk, 0, sizeof(tek_kafka_t));
 
-    ptk->running = 0;
-    ptk->brokers = strdup(brokers);
-    ptk->topic = strdup(topic);
+    tk->brokers = strdup(brokers);
+    tk->conf = rd_kafka_conf_new();
 
-    ptk->conf = rd_kafka_conf_new();
-    ptk->topic_conf = rd_kafka_topic_conf_new();
+    if (tk->brokers == NULL || tk->conf == NULL) {
+        tek_kafka_producer_dispose(tk);
+        return NULL;
+    }
 
     /*
      * internal.termination.signal is deliberately NOT set.
@@ -147,228 +142,251 @@ tek_kafka_t *tek_kafka_endpoint_create(const char *brokers, const char *topic) {
      * disposition. Teardown already waits far longer on the flush anyway.
      */
 
-    if (kafka_conf_set(ptk->conf, "bootstrap.servers", ptk->brokers) != KAFKA_SUCCESS || kafka_conf_set(ptk->conf, "compression.codec", "lz4") != KAFKA_SUCCESS) {
-        /* Nothing has been started yet, so dispose() just releases what we hold */
-        tek_kafka_endpoint_dispose(ptk);
+    /*
+     * Defaults only. Every one of these is an ordinary property name, so a
+     * kafka_connection_param() call naming the same property overrides it --
+     * these are set first precisely so that it can.
+     */
+    if (kafka_conf_set(tk->conf, "bootstrap.servers", tk->brokers, NULL, 0) != KAFKA_SUCCESS ||
+        kafka_conf_set(tk->conf, "compression.type", "lz4", NULL, 0) != KAFKA_SUCCESS ||
+        kafka_conf_set(tk->conf, "queue.buffering.max.messages", "50000", NULL, 0) != KAFKA_SUCCESS ||
+        kafka_conf_set(tk->conf, "enable.idempotence", "true", NULL, 0) != KAFKA_SUCCESS ||
+        kafka_conf_set(tk->conf, "batch.num.messages", "20000", NULL, 0) != KAFKA_SUCCESS || kafka_conf_set(tk->conf, "queue.buffering.max.ms", "500", NULL, 0) != KAFKA_SUCCESS) {
+        tek_kafka_producer_dispose(tk);
         return NULL;
     }
-    //rd_kafka_conf_set(ptk->conf, "debug", "all", errstr, sizeof(errstr));
-    //rd_kafka_conf_set(ptk->conf, "debug", "msg,protocol", errstr, sizeof(errstr));
 
-    /*
-       rd_kafka_conf_set(ptk->conf, "statistics.interval.ms", "1000", errstr, sizeof(errstr));
-       rd_kafka_conf_set_stats_cb(ptk->conf, stats_cb);
-     */
-
-    return ptk;
+    return tk;
 }
 
-void tek_kafka_endpoint_dispose(tek_kafka_t *ptk) {
+tek_kafka_status_t tek_kafka_producer_set_param(tek_kafka_t *tk, const char *name, const char *value, char *errbuf, size_t errbuflen) {
+    if (tk == NULL || zstr(name)) {
+        return KAFKA_ERROR;
+    }
 
-    if (ptk == NULL) {
+    /*
+     * librdkafka reads the conf when rd_kafka_new() is called and the object
+     * is gone afterwards, so there is no such thing as changing a property on
+     * a running producer. Refusing here is what makes that visible instead of
+     * accepting a value that would never take effect.
+     */
+    if (tk->conf == NULL) {
+        if (errbuf != NULL && errbuflen > 0) {
+            snprintf(errbuf, errbuflen, "Already connected: disconnect before changing parameters");
+        }
+        return KAFKA_ERROR;
+    }
+
+    return kafka_conf_set(tk->conf, name, value, errbuf, errbuflen);
+}
+
+static void *producer_thread(void *data) {
+    tek_kafka_t *tk = data;
+
+    while (tk->running) {
+        rd_kafka_poll(tk->rk, 100 /* 0.1 sec */ );
+    }
+
+    return NULL;
+}
+
+tek_kafka_status_t tek_kafka_producer_run(tek_kafka_t *tk, char *errbuf, size_t errbuflen) {
+    char errstr[1024];
+    int failed;
+
+    if (tk == NULL || tk->conf == NULL) {
+        return KAFKA_ERROR;
+    }
+
+    rd_kafka_conf_set_dr_msg_cb(tk->conf, dr_msg_cb);
+
+    tk->rk = rd_kafka_new(RD_KAFKA_PRODUCER, tk->conf, errstr, sizeof(errstr));
+    if (tk->rk == NULL) {
+        /*
+         * librdkafka rejects incompatible combinations here rather than at
+         * conf_set time -- "`acks` must be set to `all` when
+         * `enable.idempotence` is true", for instance -- so this message is
+         * the only place the real reason appears. Hand it back to the caller.
+         */
+        if (errbuf != NULL && errbuflen > 0) {
+            snprintf(errbuf, errbuflen, "%s", errstr);
+        }
+        error_print("Failed to create producer: %s\n", errstr);
+        /* Ownership of conf passes to rk only on success: destroy it here */
+        rd_kafka_conf_destroy(tk->conf);
+        tk->conf = NULL;
+        return KAFKA_ERROR;
+    }
+
+    /* rk owns conf now */
+    tk->conf = NULL;
+
+    tk->running = 1;
+    failed = pthread_create(&tk->thread, NULL, producer_thread, (void *) tk);
+    if (failed) {
+        tk->running = 0;
+        if (errbuf != NULL && errbuflen > 0) {
+            snprintf(errbuf, errbuflen, "Cannot start the poll thread");
+        }
+        error_print("Cannot start kafka poll thread\n");
+        return KAFKA_ERROR;
+    }
+    tk->thread_started = 1;
+
+    return KAFKA_SUCCESS;
+}
+
+int tek_kafka_producer_flush(tek_kafka_t *tk) {
+    if (tk == NULL || tk->rk == NULL) {
+        return 0;
+    }
+
+    /*
+     * rd_kafka_flush() serves delivery reports until the queue drains or the
+     * deadline expires. Bounded on purpose: a queued message only leaves the
+     * queue once it gets a delivery report, and against an unreachable broker
+     * that does not happen until message.timeout.ms elapses -- 300s by
+     * default. An unbounded wait here turns kafka_disconnect(), DROP FUNCTION
+     * and server shutdown into multi-minute hangs.
+     *
+     * One flush covers every topic, because there is one queue.
+     */
+    rd_kafka_flush(tk->rk, KAFKA_FLUSH_TIMEOUT_MS);
+
+    return rd_kafka_outq_len(tk->rk);
+}
+
+void tek_kafka_producer_dispose(tek_kafka_t *tk) {
+    if (tk == NULL) {
         return;
     }
 
-    ptk->running = 0;
+    tk->running = 0;
 
     /*
-     * Only join a thread that was really started: pthread_join() on an
-     * unset pthread_t is undefined behaviour, and an endpoint whose
-     * _run() failed never got that far.
+     * Only join a thread that was really started: pthread_join() on an unset
+     * pthread_t is undefined behaviour, and a producer whose run() failed
+     * never got that far.
      */
-    if (ptk->thread_started) {
-        pthread_join(ptk->thread, NULL);
-        ptk->thread_started = 0;
-    }
-
-    /* rk is NULL when the endpoint was created but never successfully run */
-    if (ptk->rk != NULL) {
-        int remaining;
-
-        /*
-         * rd_kafka_flush() serves delivery reports until the queue drains or
-         * the deadline expires, so it is all the draining we need. The loop
-         * that used to follow it here spun on rd_kafka_outq_len() with no
-         * deadline at all: a queued message only leaves the queue once it gets
-         * a delivery report, and against an unreachable broker that does not
-         * happen until message.timeout.ms elapses -- 300s by default. That
-         * turned kafka_disconnect(), DROP FUNCTION and server shutdown into
-         * multi-minute hangs.
-         */
-        rd_kafka_flush(ptk->rk, KAFKA_FLUSH_TIMEOUT_MS);
-
-        remaining = rd_kafka_outq_len(ptk->rk);
-        if (remaining > 0) {
-            error_print("Giving up on %d undelivered message(s) for topic %s after %d ms\n", remaining, ptk->topic, KAFKA_FLUSH_TIMEOUT_MS);
-        }
+    if (tk->thread_started) {
+        pthread_join(tk->thread, NULL);
+        tk->thread_started = 0;
     }
 
     /*
-     * The throttle in the delivery report callback may still be holding
-     * failures that were never printed. Report them rather than lose them on
-     * the way out. The poll thread has been joined above, so nothing else is
-     * touching these fields.
+     * rd_kafka_destroy() serves every outstanding delivery report before it
+     * returns, which is what makes it safe to free the topic records after
+     * this point and not before.
      */
-    if (ptk->suppressed > 0) {
-        error_print("Topic %s: %u further delivery failure(s) went unreported (%s)\n", ptk->topic, ptk->suppressed, rd_kafka_err2str(ptk->last_err));
-        ptk->suppressed = 0;
+    if (tk->rk != NULL) {
+        rd_kafka_destroy(tk->rk);
+        tk->rk = NULL;
     }
 
-    /* Destroy topic object */
-    if (ptk->rkt != NULL) {
-        rd_kafka_topic_destroy(ptk->rkt);
+    /* Non-NULL only while we still own it, i.e. rd_kafka_new() never ran */
+    if (tk->conf != NULL) {
+        rd_kafka_conf_destroy(tk->conf);
+        tk->conf = NULL;
     }
 
-    /* Destroy the producer instance */
-    if (ptk->rk != NULL) {
-        rd_kafka_destroy(ptk->rk);
-    }
-
-    /*
-     * These are non-NULL only while this endpoint still owns them, i.e. when
-     * it was created but never successfully run. Once rd_kafka_new() has
-     * consumed the conf, or the conf has consumed the topic conf, the
-     * corresponding field is NULL and nothing is destroyed twice.
-     */
-    if (ptk->conf != NULL) {
-        rd_kafka_conf_destroy(ptk->conf);
-        ptk->conf = NULL;
-    }
-
-    if (ptk->topic_conf != NULL) {
-        rd_kafka_topic_conf_destroy(ptk->topic_conf);
-        ptk->topic_conf = NULL;
-    }
-
-    safe_free(ptk->brokers);
-    safe_free(ptk->topic);
-    safe_free(ptk);
+    safe_free(tk->brokers);
+    safe_free(tk);
 
     return;
 }
 
-void tek_kafka_endpoint_get_stats(tek_kafka_t *ptk, uint32_t *transferred, uint32_t *failed) {
-    if (ptk == NULL) {
+tek_topic_t *tek_kafka_topic_create(tek_kafka_t *tk, const char *name) {
+    tek_topic_t *tt = NULL;
+
+    if (tk == NULL || tk->rk == NULL || zstr(name)) {
+        return NULL;
+    }
+
+    tt = malloc(sizeof(tek_topic_t));
+    if (tt == NULL) {
+        return NULL;
+    }
+    memset(tt, 0, sizeof(tek_topic_t));
+
+    tt->producer = tk;
+    tt->name = strdup(name);
+    if (tt->name == NULL) {
+        safe_free(tt);
+        return NULL;
+    }
+
+    /*
+     * NULL topic conf: the producer's conf already carries the topic-scoped
+     * properties, and librdkafka uses it as the default for every topic.
+     */
+    tt->rkt = rd_kafka_topic_new(tk->rk, name, NULL);
+    if (tt->rkt == NULL) {
+        error_print("Failed to create topic object for %s: %s\n", name, rd_kafka_err2str(rd_kafka_last_error()));
+        safe_free(tt->name);
+        safe_free(tt);
+        return NULL;
+    }
+
+    return tt;
+}
+
+void tek_kafka_topic_dispose(tek_topic_t *tt) {
+    if (tt == NULL) {
+        return;
+    }
+
+    if (tt->rkt != NULL) {
+        rd_kafka_topic_destroy(tt->rkt);
+        tt->rkt = NULL;
+    }
+
+    /*
+     * The throttle in the delivery report callback may still be holding
+     * failures that were never printed. Report them rather than lose them.
+     */
+    if (tt->suppressed > 0) {
+        error_print("Topic %s: %u further delivery failure(s) went unreported (%s)\n", tt->name, tt->suppressed, rd_kafka_err2str(tt->last_err));
+        tt->suppressed = 0;
+    }
+
+    return;
+}
+
+void tek_kafka_topic_free(tek_topic_t *tt) {
+    if (tt == NULL) {
+        return;
+    }
+
+    safe_free(tt->name);
+    safe_free(tt);
+
+    return;
+}
+
+void tek_kafka_topic_get_stats(tek_topic_t *tt, uint32_t *transferred, uint32_t *failed) {
+    if (tt == NULL) {
         return;
     }
 
     /*
      * Flushing here is deliberate: it is what makes the counters account for
-     * everything produced so far, and the timeout bounds the wait. rk is NULL
-     * for an endpoint that was created but never successfully run, so it has
-     * nothing queued and nothing to flush.
+     * everything produced so far, and the timeout bounds the wait.
      */
-    if (ptk->rk != NULL) {
-        rd_kafka_flush(ptk->rk, KAFKA_FLUSH_TIMEOUT_MS);
-    }
+    tek_kafka_producer_flush(tt->producer);
 
     if (transferred != NULL) {
-        *transferred = atomic_load(&ptk->transferred);
+        *transferred = atomic_load(&tt->transferred);
     }
 
     if (failed != NULL) {
-        *failed = atomic_load(&ptk->failed);
+        *failed = atomic_load(&tt->failed);
     }
 
     return;
 }
 
-static void *endpoint_thread(void *data) {
-    tek_kafka_t *ptk = data;
-
-    while (ptk->running) {
-        rd_kafka_poll(ptk->rk, 100 /* 0.1 sec */ );
-    }
-    return NULL;
-}
-
-static tek_kafka_status_t tek_kafka_endpoint_run_producer(tek_kafka_t *ptk) {
-    int failed;
-    char errstr[1024];
-
-    /* Producer config */
-    if (kafka_conf_set(ptk->conf, "max.in.flight.requests.per.connection", "20000") != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "queue.buffering.max.messages", "50000") != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "message.send.max.retries", "3") != KAFKA_SUCCESS ||
-        kafka_conf_set(ptk->conf, "batch.num.messages", "20000") != KAFKA_SUCCESS || kafka_conf_set(ptk->conf, "queue.buffering.max.ms", "500") != KAFKA_SUCCESS) {
-        return KAFKA_ERROR;
-    }
-
-/*
-    rd = rd_kafka_conf_set(ptk->conf, "queue.buffering.max.kbytes", "2097151", errstr, sizeof(errstr));
-    assert(rd == RD_KAFKA_CONF_OK);
-    rd = rd_kafka_conf_set(ptk->conf, "queued.max.messages.kbytes", "2097151", errstr, sizeof(errstr));
-    assert(rd == RD_KAFKA_CONF_OK);
-    rd = rd_kafka_conf_set(ptk->conf, "retry.backoff.ms", "250", NULL, 0);
-    assert(rd == RD_KAFKA_CONF_OK);
-    //rd = rd_kafka_conf_set(ptk->conf, "request.required.acks", "0", NULL, 0);
-
-    rd = rd_kafka_conf_set(ptk->conf, "message.max.bytes", "2000000", NULL, 0);
-    assert(rd == RD_KAFKA_CONF_OK);
-    rd_kafka_conf_set(ptk->conf, "debug", "msg,protocol", errstr, sizeof(errstr));
-*/
-
-    /* Delivery callback */
-    rd_kafka_conf_set_dr_msg_cb(ptk->conf, dr_msg_cb);
-
-    /* Attach the topic conf: conf takes ownership, so stop tracking it here */
-    rd_kafka_conf_set_default_topic_conf(ptk->conf, ptk->topic_conf);
-    ptk->topic_conf = NULL;
-
-#if 0
-    {
-        size_t t;
-        size_t s = 256;
-        const char **c;
-        c = rd_kafka_conf_dump(ptk->conf, &s);
-
-        for (t = 0; t < s; t += 2) {
-            info_print("%3zu) %-40s %s\n", t / 2, c[t], c[t + 1]);
-        }
-    }
-#endif
-
-    ptk->rk = rd_kafka_new(RD_KAFKA_PRODUCER, ptk->conf, errstr, sizeof(errstr));
-    if (ptk->rk == NULL) {
-        info_print("%% Failed to create producer: %s\n", errstr);
-        /* Ownership of conf passes to rk only on success: destroy it here */
-        rd_kafka_conf_destroy(ptk->conf);
-        ptk->conf = NULL;
-        return KAFKA_ERROR;
-    }
-
-    /* rk owns conf now (and, through it, the topic conf) */
-    ptk->conf = NULL;
-
-    ptk->rkt = rd_kafka_topic_new(ptk->rk, ptk->topic, NULL);
-    if (ptk->rkt == NULL) {
-        info_print("%% Failed to create topic object: %s\n", rd_kafka_err2str(rd_kafka_last_error()));
-        rd_kafka_destroy(ptk->rk);
-        ptk->rk = NULL;
-        return KAFKA_ERROR;
-    }
-
-    ptk->running = 1;
-    failed = pthread_create(&ptk->thread, NULL, endpoint_thread, (void *) ptk);
-    if (failed) {
-        ptk->running = 0;
-        error_print("Cannot start kafka endpoint thread\n");
-        return KAFKA_ERROR;
-    }
-    ptk->thread_started = 1;
-
-    return KAFKA_SUCCESS;
-}
-
-tek_kafka_status_t tek_kafka_endpoint_run(tek_kafka_t *ptk) {
-    if (ptk == NULL) {
-        return KAFKA_ERROR;
-    }
-
-    return tek_kafka_endpoint_run_producer(ptk);
-}
-
-static tek_kafka_status_t tek_kafka_producer_feed_key(tek_kafka_t *ptk, const void *key, size_t klen, const void *data, size_t datalen) {
+static tek_kafka_status_t tek_kafka_topic_feed_key(tek_topic_t *tt, const void *key, size_t klen, const void *data, size_t datalen) {
+    rd_kafka_t *rk = tt->producer->rk;
 
     if (key != NULL && klen == 0) {
         klen = strlen((char *) key) + 1;
@@ -377,7 +395,7 @@ static tek_kafka_status_t tek_kafka_producer_feed_key(tek_kafka_t *ptk, const vo
     do {
         if (rd_kafka_produce(
                                 /* Topic object */
-                                ptk->rkt,
+                                tt->rkt,
                                 /* Use builtin partitioner to select partition */
                                 RD_KAFKA_PARTITION_UA,
                                 /* Make a copy of the payload. */
@@ -385,34 +403,27 @@ static tek_kafka_status_t tek_kafka_producer_feed_key(tek_kafka_t *ptk, const vo
                                 /* Message payload (value) and length */
                                 (void *) data, datalen,
                                 /* Optional key and its length */
-                                //NULL, 0,
                                 key, klen,
-                                /* Message opaque, provided in
-                                 * delivery report callback as
-                                 * msg_opaque. */
-                                ptk) == -1) {
+                                /* Message opaque, handed back to the delivery
+                                 * report callback as rkmessage->_private */
+                                tt) == -1) {
 
-            /* Poll to handle delivery reports */
             if (rd_kafka_last_error() == RD_KAFKA_RESP_ERR__QUEUE_FULL) {
-                /* If the internal queue is full, wait for
-                 * messages to be delivered and then retry.
-                 * The internal queue represents both
-                 * messages to be sent and messages that have
-                 * been sent or failed, awaiting their
-                 * delivery report callback to be called.
-                 *
-                 * The internal queue is limited by the
-                 * configuration property
-                 * queue.buffering.max.messages */
-
-                rd_kafka_poll(ptk->rk, 100);
+                /*
+                 * The internal queue holds both messages waiting to be sent
+                 * and messages awaiting their delivery report, and is bounded
+                 * by queue.buffering.max.messages. Poll to drain reports and
+                 * retry.
+                 */
+                rd_kafka_poll(rk, 100);
                 continue;
             } else {
-                info_print("Failed to produce to topic %s: %s\n", rd_kafka_topic_name(ptk->rkt), rd_kafka_err2str(rd_kafka_last_error()));
+                error_print("Failed to produce to topic %s: %s\n", tt->name, rd_kafka_err2str(rd_kafka_last_error()));
                 return KAFKA_ERROR;
             }
         }
-        rd_kafka_poll(ptk->rk, 0);
+
+        rd_kafka_poll(rk, 0);
 
         break;
     } while (1);
@@ -420,6 +431,10 @@ static tek_kafka_status_t tek_kafka_producer_feed_key(tek_kafka_t *ptk, const vo
     return KAFKA_SUCCESS;
 }
 
-tek_kafka_status_t tek_kafka_producer_feed(tek_kafka_t *ptk, const void *data, size_t datalen) {
-    return tek_kafka_producer_feed_key(ptk, NULL, 0, data, datalen);
+tek_kafka_status_t tek_kafka_topic_feed(tek_topic_t *tt, const void *data, size_t datalen) {
+    if (tt == NULL || tt->rkt == NULL || tt->producer == NULL || tt->producer->rk == NULL) {
+        return KAFKA_ERROR;
+    }
+
+    return tek_kafka_topic_feed_key(tt, NULL, 0, data, datalen);
 }

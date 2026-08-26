@@ -31,10 +31,11 @@ my_bool kafka_disconnect_init(UDF_INIT *UNUSED(initid), UDF_ARGS *args, char *me
         args->arg_type[0] = STRING_RESULT;
     }
 
-    if (kafka_table_initialized() == 0) {
-        strncpy(message, "Kafka brokers has not been initialized.", MYSQL_ERRMSG_SIZE);
-        return 1;
-    }
+    /*
+     * No connection required: the no-argument form also clears the parameters
+     * accumulated by kafka_connection_param(), and there would otherwise be no
+     * way to undo a parameter set before ever connecting.
+     */
 
     return 0;
 }

@@ -65,7 +65,8 @@ INCLUDE_DIRECTORIES(${MARIADB_INCLUDE_DIR})
 SET( SOURCES
     kafka-cmd-info.c
     kafka-cmd-stats.c
-    kafka-cmd-set_brokers.c
+    kafka-cmd-connect.c
+    kafka-cmd-param.c
     kafka-cmd-disconnect.c
     kafka-cmd-send.c
     kafka-engine.c
