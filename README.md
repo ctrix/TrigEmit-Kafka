@@ -328,3 +328,48 @@ The package is **native** (`debian/source/format` is `3.0 (native)`), so its
 version comes from `debian/changelog` alone and there is no separate upstream
 tarball. Keeping that version in step with the one `kafka_info()` reports means
 tagging the release to match — see **Version** above.
+
+## Tests
+
+`tests/run-tests.sh` is an integration suite. There is nothing to mock — the
+whole point of this module is what happens between a MariaDB server and a Kafka
+broker, so a test that stubbed either would be testing nothing. It needs both,
+plus `kcat` to read messages back out:
+
+```
+tests/run-tests.sh [broker]        # default localhost:9092
+```
+
+It expects the module installed, the functions registered, and a reachable
+broker. It covers registration, the refusals before connecting, property
+validation, secret redaction, publishing with delivery confirmed by the
+counters *and* by consuming the messages back, argument coercion from INT /
+DATE / JSON_OBJECT, a real trigger firing per row, per-topic disconnect and
+recreation, and disconnect.
+
+Two behaviours it deliberately does not cover, because both need the broker to
+go away mid-run, which a CI service container cannot easily do:
+
+- delivery-failure throttling and the recovery line that follows an outage
+- teardown staying bounded when the broker is unreachable
+
+CI checks the second separately by pointing the module at a dead address and
+timing `systemctl stop mariadb`.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs three jobs on push and pull request:
+
+- **Build** — configures and builds under both `RelWithDebInfo` and `Debug`,
+  fails on any compiler warning, and checks all six UDF symbols are actually
+  exported. The `Debug` leg matters because it compiles the `debug_print()`
+  bodies the release leg optimises away.
+- **Debian package** — runs `./build-deb.sh`, prints the package contents and
+  metadata, and uploads the `.deb` as an artifact.
+- **Integration tests** — brings up a single-node Kafka in KRaft mode as a
+  service container and MariaDB on the runner itself, installs the module,
+  registers the functions, and runs `tests/run-tests.sh`.
+
+MariaDB runs on the runner rather than as a service container because the
+module has to be written into the server's plugin directory and the server
+restarted, which is awkward from outside a container.

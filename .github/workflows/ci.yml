@@ -1,0 +1,187 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_type: [ RelWithDebInfo, Debug ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Version detection needs tags, and actions/checkout fetches a
+          # shallow copy with none by default.
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake pkg-config libmariadb-dev librdkafka-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        # Warnings are the point of building twice: the Debug matrix leg turns
+        # on debug_print(), which compiles code the release leg does not.
+        #
+        # pipefail matters here: without it the exit status is tee's, and a
+        # failed build would pass this step.
+        run: |
+          set -o pipefail
+          cmake --build build -j"0 0nproc)" 2>&1 | tee build.log
+
+      - name: Fail on compiler warnings
+        run: |
+          if grep -E "warning:" build.log; then
+            echo "::error::the build produced compiler warnings"
+            exit 1
+          fi
+
+      - name: Check the module is loadable
+        # A UDF that compiles cleanly but exports nothing, or cannot resolve
+        # its libraries, is still broken.
+        run: |
+          ldd build/kafka.so
+          for f in kafka_connect kafka_connection_param kafka_disconnect \
+                   kafka_send kafka_stats kafka_info; do
+            nm -D --defined-only build/kafka.so | grep -qw "$f" \
+              || { echo "::error::$f is not exported"; exit 1; }
+          done
+
+  package:
+    name: Debian package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debhelper cmake pkg-config libmariadb-dev librdkafka-dev
+
+      - name: Build the package
+        run: ./build-deb.sh
+
+      - name: Show what was produced
+        run: |
+          for deb in dist/*.deb; do
+            echo "=== $deb"
+            dpkg -c "$deb"
+            dpkg -I "$deb"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debian-package
+          path: dist/*.deb
+          if-no-files-found: error
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      kafka:
+        image: apache/kafka:3.9.0
+        ports:
+          - 9092:9092
+        env:
+          # Single-node KRaft: no ZooKeeper, and the controller quorum is
+          # this broker alone.
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+          # The broker hands this back in metadata, and the client connects to
+          # what it is told. It has to be the address the *runner* can reach,
+          # not the container's own, or the first produce hangs.
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+          KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake pkg-config libmariadb-dev librdkafka-dev \
+            mariadb-server mariadb-client kcat
+
+      - name: Wait for Kafka
+        # The service container is up before the broker is listening.
+        run: |
+          for i in $(seq 1 60); do
+            if kcat -b localhost:9092 -L -m 2 >/dev/null 2>&1; then
+              echo "broker ready after ${i}s"
+              kcat -b localhost:9092 -L -m 5
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Kafka did not become ready"
+          exit 1
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          cmake --build build -j"$(nproc)"
+
+      - name: Install the module
+        # The server must not be running while a library it has mapped is
+        # replaced: overwriting it in place corrupts the mapping.
+        run: |
+          sudo systemctl stop mariadb
+          sudo cmake --install build
+          sudo systemctl start mariadb
+          sudo mariadb -e "SELECT @@plugin_dir"
+
+      - name: Register the functions
+        run: sudo mariadb < sql/install.sql
+
+      - name: Run the tests
+        run: sudo tests/run-tests.sh localhost:9092
+
+      - name: Check teardown is bounded
+        # An unbounded flush against an unreachable broker used to turn this
+        # into a multi-minute hang, so the time is the assertion.
+        run: |
+          sudo mariadb -e "SELECT kafka_connect('127.0.0.1:1'); SELECT kafka_send('dead','x');"
+          start=$(date +%s)
+          sudo systemctl stop mariadb
+          elapsed=$(( $(date +%s) - start ))
+          echo "shutdown took ${elapsed}s"
+          if [ "$elapsed" -gt 30 ]; then
+            echo "::error::shutdown took ${elapsed}s, teardown is not bounded"
+            exit 1
+          fi
+
+      - name: Server error log
+        if: always()
+        run: sudo journalctl -u mariadb --no-pager | tail -100
